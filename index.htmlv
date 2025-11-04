@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Dungeon Forge Online - Map Editor</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <h1>🧙 Dungeon Forge - Map Editor</h1>
+
+  <div id="toolbar">
+    <label for="gridSize">Grid Size:</label>
+    <input type="number" id="gridSize" value="16" min="8" max="64">
+    <label for="terrain">Terrain:</label>
+    <select id="terrain">
+      <option value="grass">Grass</option>
+      <option value="wall">Wall</option>
+      <option value="water">Water</option>
+      <option value="lava">Lava</option>
+    </select>
+    <button id="clearMap">Clear Map</button>
+  </div>
+
+  <canvas id="mapCanvas" width="640" height="640"></canvas>
+
+  <script src="js/map.js"></script>
+</body>
+</html>
