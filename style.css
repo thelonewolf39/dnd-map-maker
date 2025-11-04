@@ -1,0 +1,21 @@
+body {
+  background: #f8f2e3 url('assets/parchment-bg.png');
+  font-family: "IM Fell English", serif;
+  text-align: center;
+  color: #2e2b29;
+}
+
+#toolbar {
+  margin: 10px auto;
+  padding: 10px;
+  background: #e0cfa7;
+  border: 2px solid #a78a5c;
+  width: fit-content;
+  border-radius: 8px;
+}
+
+canvas {
+  border: 3px solid #5c442a;
+  cursor: crosshair;
+  margin-top: 10px;
+}
