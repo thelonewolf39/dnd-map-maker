@@ -1,28 +1,519 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Dungeon Forge Online - Map Editor</title>
-  <link rel="stylesheet" href="style.css">
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Dungeon Forge — Map Editor Prototype</title>
+<style>
+  :root{
+    --bg:#f6efe0;
+    --panel:#efe0c8;
+    --accent:#7a5c46;
+  }
+  body{font-family:system-ui,Segoe UI,Roboto,Arial; background:var(--bg); margin:0; display:flex; height:100vh;}
+  #ui{width:360px;padding:14px; box-sizing:border-box; background:var(--panel); border-right:4px solid var(--accent); overflow:auto;}
+  #canvasWrap{flex:1; display:flex; align-items:center; justify-content:center; background:linear-gradient(#efe9d8,#efe0c8); position:relative;}
+  .canv{position:absolute; image-rendering:pixelated;}
+  h1{margin:4px 0;font-size:18px}
+  label{display:block;margin-top:8px;font-size:13px}
+  select,input,button{font-size:13px;padding:6px;margin-top:6px;width:100%;box-sizing:border-box}
+  .row{display:flex;gap:8px}
+  .row > *{flex:1}
+  #tools{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .tool{padding:8px;border-radius:6px;background:white;border:1px solid #ccc;cursor:pointer;text-align:center}
+  .tool.active{outline:3px solid #cfa76b}
+  #mapContainer{width:800px;height:800px; box-shadow: 0 8px 24px rgba(0,0,0,0.12); position:relative}
+  #tokensList{margin-top:8px; font-size:13px}
+  footer{margin-top:12px;font-size:12px;color:#444}
+  .small{font-size:12px;padding:6px}
+</style>
 </head>
 <body>
-  <h1>🧙 Dungeon Forge - Map Editor</h1>
 
-  <div id="toolbar">
-    <label for="gridSize">Grid Size:</label>
-    <input type="number" id="gridSize" value="16" min="8" max="64">
-    <label for="terrain">Terrain:</label>
-    <select id="terrain">
-      <option value="grass">Grass</option>
-      <option value="wall">Wall</option>
-      <option value="water">Water</option>
-      <option value="lava">Lava</option>
-    </select>
-    <button id="clearMap">Clear Map</button>
+<div id="ui">
+  <h1>Dungeon Forge — Map Editor (prototype)</h1>
+
+  <label>Canvas size (px)</label>
+  <div class="row"><input id="canvasW" type="number" value="800"><input id="canvasH" type="number" value="800"></div>
+
+  <label>Grid size (px)</label>
+  <input id="gridSize" type="number" value="32" min="8" max="128">
+
+  <label>Tools</label>
+  <div id="tools">
+    <div class="tool active" data-tool="pencil">✒️ Pencil (hand-drawn)</div>
+    <div class="tool" data-tool="tile">🧩 Tile / Stamp</div>
+    <div class="tool" data-tool="line">📏 Line</div>
+    <div class="tool" data-tool="eraser">🧽 Eraser</div>
+    <div class="tool" data-tool="fogErase">🌫️ Fog Reveal</div>
+    <div class="tool" data-tool="fogPaint">🌫️ Fog Cover</div>
+    <div class="tool" data-tool="token">🔵 Token (place/move)</div>
   </div>
 
-  <canvas id="mapCanvas" width="640" height="640"></canvas>
+  <label>Brush size</label>
+  <input id="brushSize" type="range" min="1" max="64" value="8">
 
-  <script src="js/map.js"></script>
+  <label>Color (pencil)</label>
+  <input id="color" type="color" value="#2d2b27">
+
+  <label>Tile / Stamp (sample included)</label>
+  <div class="row">
+    <select id="tileSelect">
+      <option value="rock">🪨 Rock</option>
+      <option value="tree">🌳 Tree</option>
+      <option value="chest">🗝️ Chest</option>
+    </select>
+    <button id="snapGrid" class="small">Snap: ON</button>
+  </div>
+
+  <label>Token Vision Radius (px)</label>
+  <input id="tokenVision" type="range" min="24" max="256" value="96">
+
+  <div style="margin-top:8px" class="row">
+    <button id="undoBtn">↶ Undo</button>
+    <button id="redoBtn">↷ Redo</button>
+  </div>
+
+  <div style="margin-top:8px" class="row">
+    <button id="saveBtn">💾 Save .dndses</button>
+    <button id="loadBtn">📂 Load .dndses</button>
+  </div>
+
+  <label><input type="checkbox" id="showGrid" checked> Show Grid</label>
+  <label><input type="checkbox" id="snapToGrid" checked> Snap tools to grid</label>
+
+  <div id="tokensList"><strong>Tokens:</strong><div id="tokensArea"></div></div>
+
+  <footer>
+    Prototype: layers, fog reveal (manual & token-auto), tile stamping, and save/load as <code>.dndses</code>.
+  </footer>
+</div>
+
+<div id="canvasWrap">
+  <div id="mapContainer">
+    <!-- canvases stacked -->
+    <canvas id="baseCanvas" class="canv" width="800" height="800" style="z-index:0"></canvas>
+    <canvas id="detailCanvas" class="canv" width="800" height="800" style="z-index:1"></canvas>
+    <canvas id="tokenCanvas" class="canv" width="800" height="800" style="z-index:2"></canvas>
+    <canvas id="fogCanvas" class="canv" width="800" height="800" style="z-index:3"></canvas>
+    <!-- grid overlay (drawn on top) -->
+    <canvas id="gridCanvas" class="canv" width="800" height="800" style="z-index:4;pointer-events:none"></canvas>
+  </div>
+</div>
+
+<input id="fileInput" type="file" accept=".dndses" style="display:none"/>
+
+<script>
+(() => {
+  // DOM
+  const base = document.getElementById('baseCanvas');
+  const detail = document.getElementById('detailCanvas');
+  const tokenC = document.getElementById('tokenCanvas');
+  const fog = document.getElementById('fogCanvas');
+  const grid = document.getElementById('gridCanvas');
+
+  const baseCtx = base.getContext('2d');
+  const detailCtx = detail.getContext('2d');
+  const tokenCtx = tokenC.getContext('2d');
+  const fogCtx = fog.getContext('2d');
+  const gridCtx = grid.getContext('2d');
+
+  const tools = document.getElementById('tools');
+  const toolButtons = Array.from(document.querySelectorAll('.tool'));
+  const brushSize = document.getElementById('brushSize');
+  const colorInput = document.getElementById('color');
+  const tileSelect = document.getElementById('tileSelect');
+  const tokenVision = document.getElementById('tokenVision');
+  const undoBtn = document.getElementById('undoBtn');
+  const redoBtn = document.getElementById('redoBtn');
+  const saveBtn = document.getElementById('saveBtn');
+  const loadBtn = document.getElementById('loadBtn');
+  const fileInput = document.getElementById('fileInput');
+  const showGrid = document.getElementById('showGrid');
+  const snapToggle = document.getElementById('snapToGrid');
+  const snapGridBtn = document.getElementById('snapGrid');
+  const gridSizeInput = document.getElementById('gridSize');
+  const canvasW = document.getElementById('canvasW');
+  const canvasH = document.getElementById('canvasH');
+  const tokensArea = document.getElementById('tokensArea');
+
+  let activeTool = 'pencil';
+  let drawing = false;
+  let last = null;
+  let brush = parseInt(brushSize.value);
+  let gridSize = parseInt(gridSizeInput.value);
+  let snap = snapToggle.checked;
+  let showGridVal = showGrid.checked;
+
+  // tokens
+  let tokens = []; // {id,x,y,radius,label}
+  let draggingToken = null;
+  let dragOffset = {x:0,y:0};
+
+  // Undo/Redo stacks - we store snapshots for detail and fog and tokens combined
+  const undoStack = [];
+  const redoStack = [];
+  function snapshotPush(){
+    // store dataURLs for both detail and fog and tokens
+    undoStack.push({
+      detail: detail.toDataURL(),
+      fog: fog.toDataURL(),
+      tokens: JSON.stringify(tokens)
+    });
+    if(undoStack.length>50) undoStack.shift();
+    // clear redo
+    redoStack.length = 0;
+  }
+  function applySnapshot(snap){
+    // restore images
+    const dImg = new Image();
+    const fImg = new Image();
+    dImg.onload = ()=>{ detailCtx.clearRect(0,0,detail.width,detail.height); detailCtx.drawImage(dImg,0,0); };
+    fImg.onload = ()=>{ fogCtx.clearRect(0,0,fog.width,fog.height); fogCtx.drawImage(fImg,0,0); };
+    dImg.src = snap.detail;
+    fImg.src = snap.fog;
+    tokens = JSON.parse(snap.tokens);
+    redrawTokens();
+    renderGrid();
+  }
+
+  undoBtn.onclick = ()=>{
+    if(undoStack.length===0) return;
+    const lastSnap = undoStack.pop();
+    redoStack.push({
+      detail: detail.toDataURL(),
+      fog: fog.toDataURL(),
+      tokens: JSON.stringify(tokens)
+    });
+    applySnapshot(lastSnap);
+  };
+  redoBtn.onclick = ()=>{
+    if(redoStack.length===0) return;
+    const snap = redoStack.pop();
+    undoStack.push({
+      detail: detail.toDataURL(),
+      fog: fog.toDataURL(),
+      tokens: JSON.stringify(tokens)
+    });
+    applySnapshot(snap);
+  };
+
+  // tools
+  toolButtons.forEach(btn=>{
+    btn.addEventListener('click', ()=> {
+      toolButtons.forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      activeTool = btn.dataset.tool;
+    });
+  });
+
+  brushSize.addEventListener('input', ()=> brush = parseInt(brushSize.value));
+  gridSizeInput.addEventListener('change', ()=> { gridSize = parseInt(gridSizeInput.value); renderGrid(); });
+  snapToggle.addEventListener('change', ()=> snap = snapToggle.checked);
+  snapGridBtn.addEventListener('click', ()=> { snapGridBtn.textContent = snapGridBtn.textContent.includes('ON') ? 'Snap: OFF' : 'Snap: ON'; });
+
+  // canvas resizing
+  function resizeAll(w,h){
+    [base,detail,tokenC,fog,grid].forEach(c=>{
+      c.width = w; c.height = h;
+      c.style.width = w+'px'; c.style.height = h+'px';
+    });
+    // base draw parchment
+    baseCtx.fillStyle = '#f3ecd8';
+    baseCtx.fillRect(0,0,base.width,base.height);
+    renderGrid();
+    // initialize fog to full cover
+    fogCtx.clearRect(0,0,fog.width,fog.height);
+    fogCtx.fillStyle = '#000000';
+    fogCtx.globalAlpha = 0.9;
+    fogCtx.fillRect(0,0,fog.width,fog.height);
+    fogCtx.globalAlpha = 1;
+    redrawTokens();
+  }
+  canvasW.addEventListener('change', ()=> resizeAll(parseInt(canvasW.value)||800, fog.height));
+  canvasH.addEventListener('change', ()=> resizeAll(fog.width, parseInt(canvasH.value)||800));
+  // initial
+  resizeAll(parseInt(canvasW.value), parseInt(canvasH.value));
+
+  // grid
+  function renderGrid(){
+    gridCtx.clearRect(0,0,grid.width,grid.height);
+    if(!showGrid.checked) return;
+    const gs = gridSize;
+    gridCtx.strokeStyle = 'rgba(0,0,0,0.08)';
+    for(let x=0;x<=grid.width;x+=gs){
+      gridCtx.beginPath(); gridCtx.moveTo(x+0.5,0); gridCtx.lineTo(x+0.5,grid.height); gridCtx.stroke();
+    }
+    for(let y=0;y<=grid.height;y+=gs){
+      gridCtx.beginPath(); gridCtx.moveTo(0,y+0.5); gridCtx.lineTo(grid.width,y+0.5); gridCtx.stroke();
+    }
+  }
+
+  showGrid.addEventListener('change', renderGrid);
+
+  // drawing helpers
+  function getMousePos(e, canvasEl){
+    const rect = canvasEl.getBoundingClientRect();
+    const x = (e.clientX - rect.left) * (canvasEl.width / rect.width);
+    const y = (e.clientY - rect.top) * (canvasEl.height / rect.height);
+    if(snap && (activeTool==='tile' || activeTool==='token' || snapToggle.checked)){
+      return { x: Math.round(x/gridSize)*gridSize, y: Math.round(y/gridSize)*gridSize };
+    }
+    return { x: x, y: y };
+  }
+
+  function smoothLine(ctx, x1,y1, x2,y2, size, color){
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = color;
+    ctx.lineWidth = size;
+    ctx.beginPath();
+    ctx.moveTo(x1,y1);
+    ctx.lineTo(x2,y2);
+    ctx.stroke();
+  }
+
+  // pencil/detail drawing
+  detail.addEventListener('pointerdown', e=>{
+    if(['pencil','eraser','line','tile','fogErase','fogPaint','token'].includes(activeTool)){
+      drawing = true;
+      last = getMousePos(e, detail);
+      if(activeTool === 'tile'){
+        snapshotPush();
+        placeTile(last.x, last.y);
+        drawing = false;
+      } else if(activeTool === 'token'){
+        // token place or start drag
+        const pos = last;
+        // check if clicked on existing token
+        const t = tokens.find(t=>Math.hypot(t.x-pos.x,t.y-pos.y) < (t.radius||32));
+        if(t){ draggingToken = t; dragOffset.x = pos.x - t.x; dragOffset.y = pos.y - t.y; snapshotPush(); }
+        else { snapshotPush(); placeToken(pos.x,pos.y); draggingToken = tokens[tokens.length-1]; dragOffset = {x:0,y:0}; }
+      } else if(activeTool==='fogErase' || activeTool==='fogPaint' || activeTool==='pencil' || activeTool==='eraser' || activeTool==='line'){
+        snapshotPush();
+        // start stroke
+        if(activeTool==='pencil' || activeTool==='eraser'){
+          // draw initial
+          if(activeTool==='pencil'){
+            detailCtx.globalCompositeOperation = 'source-over';
+            detailCtx.strokeStyle = colorInput.value;
+            detailCtx.lineWidth = brush;
+          } else {
+            detailCtx.globalCompositeOperation = 'destination-out';
+            detailCtx.lineWidth = brush;
+          }
+          detailCtx.beginPath();
+          detailCtx.moveTo(last.x,last.y);
+        } else if(activeTool==='line'){
+          // line handles on up
+        } else if(activeTool==='fogErase' || activeTool==='fogPaint'){
+          // drawing on fog canvas
+          const mode = activeTool === 'fogErase' ? 'erase' : 'cover';
+          fogDraw(last.x,last.y, mode);
+        }
+      }
+    }
+  });
+
+  detail.addEventListener('pointermove', e=>{
+    if(!drawing) return;
+    const pos = getMousePos(e, detail);
+    if(activeTool==='pencil' || activeTool==='eraser'){
+      if(activeTool==='pencil'){
+        detailCtx.globalCompositeOperation = 'source-over';
+        detailCtx.strokeStyle = colorInput.value;
+      } else {
+        detailCtx.globalCompositeOperation = 'destination-out';
+      }
+      detailCtx.lineWidth = brush;
+      detailCtx.lineTo(pos.x,pos.y);
+      detailCtx.stroke();
+    } else if(activeTool==='fogErase' || activeTool==='fogPaint'){
+      const mode = activeTool === 'fogErase' ? 'erase' : 'cover';
+      fogDraw(pos.x,pos.y, mode);
+    } else if(activeTool==='token' && draggingToken){
+      // move token
+      draggingToken.x = pos.x - dragOffset.x;
+      draggingToken.y = pos.y - dragOffset.y;
+      // auto-reveal around token
+      revealAroundToken(draggingToken);
+      redrawTokens();
+    }
+    last = pos;
+  });
+
+  detail.addEventListener('pointerup', e=>{
+    if(!drawing) return;
+    drawing = false;
+    if(activeTool==='pencil' || activeTool==='eraser') detailCtx.closePath();
+    if(activeTool==='line'){
+      const pos = getMousePos(e, detail);
+      detailCtx.globalCompositeOperation = 'source-over';
+      detailCtx.strokeStyle = colorInput.value;
+      detailCtx.lineWidth = brush;
+      detailCtx.beginPath();
+      detailCtx.moveTo(last.x,last.y);
+      detailCtx.lineTo(pos.x,pos.y);
+      detailCtx.stroke();
+      detailCtx.closePath();
+    }
+    draggingToken = null;
+  });
+
+  // tile placement (simple shapes)
+  function placeTile(x,y){
+    const t = tileSelect.value;
+    const size = gridSize;
+    detailCtx.save();
+    detailCtx.translate(x,y);
+    // draw simple emoji-ish shapes as demo tiles
+    detailCtx.textAlign='center'; detailCtx.textBaseline='middle';
+    detailCtx.font = (size*0.9)+'px serif';
+    if(t==='rock') detailCtx.fillText('🪨',0,0);
+    if(t==='tree') detailCtx.fillText('🌳',0,0);
+    if(t==='chest') detailCtx.fillText('🧰',0,0);
+    detailCtx.restore();
+  }
+
+  // fog drawing (erase to reveal)
+  function fogDraw(x,y, mode='erase'){
+    fogCtx.save();
+    fogCtx.globalCompositeOperation = mode==='erase' ? 'destination-out' : 'source-over';
+    fogCtx.beginPath();
+    fogCtx.fillStyle = mode==='erase' ? 'rgba(0,0,0,1)' : '#000';
+    fogCtx.arc(x,y,brush,0,Math.PI*2);
+    fogCtx.fill();
+    fogCtx.restore();
+  }
+
+  // tokens
+  function placeToken(x,y){
+    const id = Date.now().toString(36);
+    const rad = parseInt(tokenVision.value);
+    const tok = {id,x,y,radius:rad,label:'Token '+(tokens.length+1)};
+    tokens.push(tok);
+    revealAroundToken(tok);
+    redrawTokens();
+    updateTokenList();
+  }
+
+  function revealAroundToken(tok){
+    // reveal circle on fog
+    fogCtx.save();
+    fogCtx.globalCompositeOperation = 'destination-out';
+    fogCtx.beginPath();
+    fogCtx.arc(tok.x, tok.y, tok.radius, 0, Math.PI*2);
+    fogCtx.fill();
+    fogCtx.restore();
+  }
+
+  function redrawTokens(){
+    tokenCtx.clearRect(0,0,tokenC.width,tokenC.height);
+    tokens.forEach(t=>{
+      // vision halo (glow)
+      tokenCtx.beginPath();
+      tokenCtx.fillStyle = 'rgba(200,240,255,0.06)';
+      tokenCtx.arc(t.x,t.y,t.radius,0,Math.PI*2);
+      tokenCtx.fill();
+      // token marker
+      tokenCtx.beginPath();
+      tokenCtx.fillStyle = '#2b6cff';
+      tokenCtx.arc(t.x,t.y,10,0,Math.PI*2);
+      tokenCtx.fill();
+      tokenCtx.strokeStyle='#fff';
+      tokenCtx.lineWidth=2;
+      tokenCtx.stroke();
+    });
+  }
+
+  function updateTokenList(){
+    tokensArea.innerHTML = '';
+    tokens.forEach(t=>{
+      const el = document.createElement('div');
+      el.style.padding='6px';
+      el.style.borderBottom='1px dashed #ccc';
+      el.textContent = `${t.label} @ (${Math.round(t.x)}, ${Math.round(t.y)}) radius:${t.radius}`;
+      tokensArea.appendChild(el);
+    });
+  }
+
+  // save/load as .dndses
+  saveBtn.addEventListener('click', ()=>{
+    // construct JSON: base (dataURL), detail (dataURL), fog (dataURL), tokens, gridSize, canvas size
+    const payload = {
+      version:'2.0',
+      canvas:{w: base.width, h: base.height},
+      gridSize: gridSize,
+      base: base.toDataURL(), // parchment background
+      detail: detail.toDataURL(),
+      fog: fog.toDataURL(),
+      tokens: tokens
+    };
+    const blob = new Blob([JSON.stringify(payload)], {type:'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `session-${(new Date()).toISOString().replace(/[:.]/g,'-')}.dndses`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+
+  loadBtn.addEventListener('click', ()=> fileInput.click());
+  fileInput.addEventListener('change', (ev)=>{
+    const f = ev.target.files[0];
+    if(!f) return;
+    const reader = new FileReader();
+    reader.onload = ()=> {
+      try{
+        const data = JSON.parse(reader.result);
+        if(data.canvas){
+          resizeAll(data.canvas.w, data.canvas.h);
+        }
+        gridSizeInput.value = data.gridSize || gridSize;
+        gridSize = parseInt(gridSizeInput.value);
+        // load images
+        const b = new Image(), d = new Image(), fo = new Image();
+        b.onload = ()=> baseCtx.drawImage(b,0,0);
+        d.onload = ()=> { detailCtx.clearRect(0,0,detail.width,detail.height); detailCtx.drawImage(d,0,0); };
+        fo.onload = ()=> { fogCtx.clearRect(0,0,fog.width,fog.height); fogCtx.drawImage(fo,0,0); };
+        b.src = data.base;
+        d.src = data.detail;
+        fo.src = data.fog;
+        tokens = data.tokens || [];
+        redrawTokens();
+        updateTokenList();
+        renderGrid();
+      }catch(err){
+        alert('Failed to load .dndses: '+err.message);
+      }
+    };
+    reader.readAsText(f);
+  });
+
+  // small UI glue
+  tokenVision.addEventListener('input', ()=> {
+    // if dragging token or selected, update last token radius
+    if(tokens.length>0){
+      tokens[tokens.length-1].radius = parseInt(tokenVision.value);
+    }
+  });
+
+  // keyboard shortcuts
+  window.addEventListener('keydown', (e)=>{
+    if(e.ctrlKey && e.key==='z'){ undoBtn.click(); }
+    if(e.ctrlKey && e.key==='y'){ redoBtn.click(); }
+  });
+
+  // initial snapshot
+  snapshotPush();
+
+  // expose for debugging (optional)
+  window.DungeonForge = {
+    base,detail,fog,tokenC,grid,
+    placeTile,placeToken, tokens
+  };
+
+})();
+</script>
+
 </body>
 </html>
